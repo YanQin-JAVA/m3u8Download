@@ -83,6 +83,8 @@ public class M3u8Main {
       /*  Map<String, Object> headersMap = new HashMap<>();
         headersMap.put("Content-Type", "text/html;charset=utf-8");
         m3u8Download.addRequestHeaderMap(headersMap);*/
+        //如果需要的话设置http代理
+        //m3u8Download.setProxy("172.50.60.3",8090);
         //添加监听器
         AtomicBoolean suc = new AtomicBoolean(false);
         m3u8Download.addListener(new DownloadListener() {

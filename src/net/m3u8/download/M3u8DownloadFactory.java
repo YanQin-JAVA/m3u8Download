@@ -14,6 +14,8 @@ import javax.crypto.spec.SecretKeySpec;
 import java.io.*;
 import java.math.BigDecimal;
 import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -66,7 +68,7 @@ public class M3u8DownloadFactory {
         private int retryCount = 30;
 
         //链接连接超时时间（单位：毫秒）
-        private long timeoutMillisecond = 0L;
+        private long timeoutMillisecond = 1000L;
 
         //合并后的文件存储目录
         private String dir;
@@ -117,11 +119,13 @@ public class M3u8DownloadFactory {
         //监听事件
         private Set<DownloadListener> listenerSet = new HashSet<>(5);
 
+        //代理设置
+        private Proxy proxy;
+
         /**
          * 开始下载视频
          */
         public void start() {
-            setThreadCount(30);
             checkField();
             String tsUrl = getTsUrl();
             if (StringUtils.isEmpty(tsUrl))
@@ -303,7 +307,11 @@ public class M3u8DownloadFactory {
                     try {
                         //模拟http请求获取ts片段文件
                         URL url = new URL(urls);
-                        httpURLConnection = (HttpURLConnection) url.openConnection();
+                        if (proxy ==null) {
+                            httpURLConnection = (HttpURLConnection) url.openConnection();
+                        }else {
+                            httpURLConnection = (HttpURLConnection) url.openConnection(proxy);
+                        }
                         httpURLConnection.setConnectTimeout((int) timeoutMillisecond);
                         for (Map.Entry<String, Object> entry : requestHeaderMap.entrySet())
                             httpURLConnection.addRequestProperty(entry.getKey(), entry.getValue().toString());
@@ -479,7 +487,11 @@ public class M3u8DownloadFactory {
             while (count <= retryCount) {
                 try {
                     URL url = new URL(urls);
-                    httpURLConnection = (HttpURLConnection) url.openConnection();
+                    if (proxy ==null) {
+                        httpURLConnection = (HttpURLConnection) url.openConnection();
+                    }else {
+                        httpURLConnection = (HttpURLConnection) url.openConnection(proxy);
+                    }
                     httpURLConnection.setConnectTimeout((int) timeoutMillisecond);
                     httpURLConnection.setReadTimeout((int) timeoutMillisecond);
                     httpURLConnection.setUseCaches(false);
@@ -520,16 +532,6 @@ public class M3u8DownloadFactory {
             if (count > retryCount)
                 throw new M3u8Exception("连接超时！");
             return content;
-        }
-
-        public static void main(String[] args) throws IOException {
-            String s = Files.readString(new File("C:\\Users\\yanqi\\IdeaProjects\\m3u8Download\\src\\net\\m3u8\\download\\txt.txt").toPath());
-            int len = 1206400;
-            String skey = "3mwt3JTdoj77bpitqBsiDHy1RKkZZKBcmp06D6UzsI9bjECxNDu9Wfbx+skfVQcYBzW4tHLYDST/1qsg2DXUEri4IiHo+IDblGdcBAqjiw4nWrZolW3bFFbFOcKoh0exAoKeK9RegkNqBGyyS4ZB/oDFDmWAES4eL4EibW/a/lgAMil+eIjO4heAhvQ=";
-            String iv = "";
-            String m = "AES-128";
-
-
         }
 
         /**
@@ -702,6 +704,23 @@ public class M3u8DownloadFactory {
         private M3u8Download() {
             requestHeaderMap.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.108 Safari/537.36");
         }
+
+        public Proxy getProxy() {
+            return proxy;
+        }
+
+        public void setProxy(int port) {
+            this.proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress("127.0.0.1", port));
+        }
+
+        public void setProxy(String address, int port) {
+            this.proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(address, port));
+        }
+
+        public void setProxy(Proxy.Type type, String address, int port) {
+            this.proxy = new Proxy(type, new InetSocketAddress(address, port));
+        }
+
     }
 
     /**

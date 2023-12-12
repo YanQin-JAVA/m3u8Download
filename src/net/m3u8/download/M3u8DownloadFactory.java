@@ -14,14 +14,20 @@ import javax.crypto.spec.SecretKeySpec;
 import java.io.*;
 import java.math.BigDecimal;
 import java.net.HttpURLConnection;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.CopyOption;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.Security;
 import java.security.spec.AlgorithmParameterSpec;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static net.m3u8.utils.Constant.FILESEPARATOR;
 
@@ -48,7 +54,7 @@ public class M3u8DownloadFactory {
     public static class M3u8Download {
 
         //要下载的m3u8链接
-        private final String DOWNLOADURL;
+        private String DOWNLOADURL;
 
         //优化内存占用
         private static final BlockingQueue<byte[]> BLOCKING_QUEUE = new LinkedBlockingQueue<>();
@@ -60,10 +66,15 @@ public class M3u8DownloadFactory {
         private int retryCount = 30;
 
         //链接连接超时时间（单位：毫秒）
-        private long timeoutMillisecond = 1000L;
+        private long timeoutMillisecond = 0L;
 
         //合并后的文件存储目录
         private String dir;
+
+        /**
+         * 归档目录
+         */
+        private String archiveDir;
 
         //合并后的视频文件名称
         private String fileName;
@@ -96,11 +107,12 @@ public class M3u8DownloadFactory {
         private BigDecimal downloadBytes = new BigDecimal(0);
 
         //监听间隔
-        private volatile long interval = 0L;
+        private volatile long interval = 1000L;
 
         //自定义请求头
         private Map<String, Object> requestHeaderMap = new HashMap<>();
-        ;
+
+        private AtomicBoolean success = new AtomicBoolean(false);
 
         //监听事件
         private Set<DownloadListener> listenerSet = new HashSet<>(5);
@@ -145,8 +157,8 @@ public class M3u8DownloadFactory {
                         BigDecimal bigDecimal = new BigDecimal(downloadBytes.toString());
                         Thread.sleep(1000L);
                         Log.i("已用时" + consume + "秒！\t下载速度：" + StringUtils.convertToDownloadSpeed(new BigDecimal(downloadBytes.toString()).subtract(bigDecimal), 3) + "/s");
-                        Log.i("\t已完成" + finishedCount + "个，还剩" + (tsSet.size() - finishedCount) + "个！");
-                        Log.i(new BigDecimal(finishedCount).divide(new BigDecimal(tsSet.size()), 4, BigDecimal.ROUND_HALF_UP).multiply(new BigDecimal(100)).setScale(2, BigDecimal.ROUND_HALF_UP) + "%");
+//                        Log.i("\t已完成" + finishedCount + "个，还剩" + (tsSet.size() - finishedCount) + "个！");
+//                        Log.i(new BigDecimal(finishedCount).divide(new BigDecimal(tsSet.size()), 4, BigDecimal.ROUND_HALF_UP).multiply(new BigDecimal(100)).setScale(2, BigDecimal.ROUND_HALF_UP) + "%");
                     } catch (InterruptedException e) {
                         e.printStackTrace();
                     }
@@ -156,7 +168,10 @@ public class M3u8DownloadFactory {
                 mergeTs();
                 //删除多余的ts片段
                 deleteFiles();
-                Log.i("视频合并完成，欢迎使用!");
+                Log.i("视频合并完成");
+                archive();
+                Log.i("归档完成，欢迎使用!");
+                success.set(true);
             }).start();
             startListener(fixedThreadPool);
         }
@@ -169,14 +184,29 @@ public class M3u8DownloadFactory {
                 while (!fixedThreadPool.isTerminated()) {
                     try {
                         Thread.sleep(interval);
-                        for (DownloadListener downloadListener : listenerSet)
+                        for (DownloadListener downloadListener : listenerSet) {
                             downloadListener.process(DOWNLOADURL, finishedCount, tsSet.size(), new BigDecimal(finishedCount).divide(new BigDecimal(tsSet.size()), 4, BigDecimal.ROUND_HALF_UP).multiply(new BigDecimal(100)).setScale(2, BigDecimal.ROUND_HALF_UP).floatValue());
+                        }
                     } catch (InterruptedException e) {
                         e.printStackTrace();
                     }
                 }
-                for (DownloadListener downloadListener : listenerSet)
-                    downloadListener.end();
+                Iterator<DownloadListener> it = listenerSet.iterator();
+                while (it.hasNext()){
+
+                    while (!success.get()){
+                        try {
+                            Thread.sleep(1000L);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                    }
+
+                    DownloadListener next = it.next();
+                    next.end();
+                    it.remove();
+                }
+
             }).start();
             new Thread(() -> {
                 while (!fixedThreadPool.isTerminated()) {
@@ -190,6 +220,20 @@ public class M3u8DownloadFactory {
                     }
                 }
             }).start();
+        }
+
+        private void archive(){
+            try{
+                File file = new File(dir + FILESEPARATOR + fileName + ".mp4");
+                File file2 = new File(archiveDir + FILESEPARATOR + fileName + ".mp4");
+                File archiveDirFile = new File(archiveDir);
+                if(!archiveDirFile.exists()){
+                    archiveDirFile.mkdirs();
+                }
+                Files.move(file.toPath(),file2.toPath(), StandardCopyOption.ATOMIC_MOVE );
+            }catch (Exception e){
+                e.printStackTrace();
+            }
         }
 
         /**
@@ -304,7 +348,7 @@ public class M3u8DownloadFactory {
                         }
                         Log.d("第" + count + "获取链接重试！\t" + urls);
                         count++;
-//                        e.printStackTrace();
+                        e.printStackTrace();
                     } finally {
                         try {
                             if (inputStream1 != null)
@@ -324,7 +368,7 @@ public class M3u8DownloadFactory {
                 }
                 if (count > retryCount)
                     //自定义异常
-                    throw new M3u8Exception("连接超时！");
+                    throw new M3u8Exception("重试次数过多！");
                 finishedCount++;
 //                Log.i(urls + "下载完毕！\t已完成" + finishedCount + "个，还剩" + (tsSet.size() - finishedCount) + "个！");
             });
@@ -415,7 +459,8 @@ public class M3u8DownloadFactory {
             }
             if (!StringUtils.isEmpty(key)) {
                 key = key.replace("\"", "");
-                return getUrlContent(StringUtils.isUrl(key) ? key : mergeUrl(relativeUrl, key), true).toString().replaceAll("\\s+", "");
+                String urls = StringUtils.isUrl(key) ? key : mergeUrl(relativeUrl, key);
+                return getUrlContent(urls, true).toString().replaceAll("\\s+", "");
             }
             return null;
         }
@@ -460,7 +505,7 @@ public class M3u8DownloadFactory {
                         content.append(line).append("\n");
                     bufferedReader.close();
                     inputStream.close();
-                    Log.i(content);
+                    Log.i("getUrlContent: "+content);
                     break;
                 } catch (Exception e) {
                     Log.d("第" + count + "获取链接重试！\t" + urls);
@@ -475,6 +520,16 @@ public class M3u8DownloadFactory {
             if (count > retryCount)
                 throw new M3u8Exception("连接超时！");
             return content;
+        }
+
+        public static void main(String[] args) throws IOException {
+            String s = Files.readString(new File("C:\\Users\\yanqi\\IdeaProjects\\m3u8Download\\src\\net\\m3u8\\download\\txt.txt").toPath());
+            int len = 1206400;
+            String skey = "3mwt3JTdoj77bpitqBsiDHy1RKkZZKBcmp06D6UzsI9bjECxNDu9Wfbx+skfVQcYBzW4tHLYDST/1qsg2DXUEri4IiHo+IDblGdcBAqjiw4nWrZolW3bFFbFOcKoh0exAoKeK9RegkNqBGyyS4ZB/oDFDmWAES4eL4EibW/a/lgAMil+eIjO4heAhvQ=";
+            String iv = "";
+            String m = "AES-128";
+
+
         }
 
         /**
@@ -533,9 +588,18 @@ public class M3u8DownloadFactory {
             tsSet.clear();
             finishedFiles.clear();
             downloadBytes = new BigDecimal(0);
+            success.set(false);
         }
 
         private String mergeUrl(String start, String end) {
+            URI uri = null;
+            try {
+                uri = new URI(start);
+            } catch (URISyntaxException e) {
+                e.printStackTrace();
+            }
+            start = uri.getScheme() + "://" + uri.getHost() + "/";
+
             if (end.startsWith("/"))
                 end = end.replaceFirst("/", "");
             int position = 0;
@@ -553,6 +617,10 @@ public class M3u8DownloadFactory {
 
         public String getDOWNLOADURL() {
             return DOWNLOADURL;
+        }
+
+        public void setUrl(String u){
+            this.DOWNLOADURL = u;
         }
 
         public int getThreadCount() {
@@ -595,6 +663,10 @@ public class M3u8DownloadFactory {
             this.dir = dir;
         }
 
+        public void setArchiveDir(String archiveDir) {
+            this.archiveDir = archiveDir;
+        }
+
         public String getFileName() {
             return fileName;
         }
@@ -627,8 +699,7 @@ public class M3u8DownloadFactory {
             listenerSet.add(downloadListener);
         }
 
-        private M3u8Download(String DOWNLOADURL) {
-            this.DOWNLOADURL = DOWNLOADURL;
+        private M3u8Download() {
             requestHeaderMap.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.108 Safari/537.36");
         }
     }
@@ -636,14 +707,13 @@ public class M3u8DownloadFactory {
     /**
      * 获取实例
      *
-     * @param downloadUrl 要下载的链接
      * @return 返回m3u8下载实例
      */
-    public static M3u8Download getInstance(String downloadUrl) {
+    public static M3u8Download getInstance() {
         if (m3u8Download == null) {
             synchronized (M3u8Download.class) {
                 if (m3u8Download == null)
-                    m3u8Download = new M3u8Download(downloadUrl);
+                    m3u8Download = new M3u8Download();
             }
         }
         return m3u8Download;
